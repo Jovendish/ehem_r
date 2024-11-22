@@ -1,5 +1,4 @@
 import glob
-import yaml
 import os
 
 import numpy as np
@@ -47,42 +46,36 @@ def encode(model, octree_nodes):
                 context = octree_nodes[levels == level]
 
             length = context.shape[0]
-            prob = torch.zeros((length + 1, 256))
+            prob1 = torch.zeros((length + 1, 256))
+            prob2 = torch.zeros((length + 1, 256))
 
             padding_context, padding_idx = process_context(context)
             padding_ctx_len = padding_context.shape[0]
+            padding_context[length:, :, -1, 0] = 0
 
             for i in range(0, padding_ctx_len, ctx_win):
                 idx = padding_idx[i : i + ctx_win]
                 ctx = padding_context[i : i + ctx_win]
 
                 ctx1 = ctx.clone()
-                ctx1[:, :, -1, 0] = ctx1[:, :, -2, 0]
-                ctx1[length:, :, -1, 0] = 0
+                ctx1[:, :, -1, 0] = 0
 
                 ctx2 = ctx.clone()
-                ctx2[1::2, :, -1, 0] = ctx2[1::2, :, -2, 0]
-                ctx2[length:, :, -1, 0] = 0
+                ctx2[1::2, :, -1, 0] = 0
 
                 output1 = model(ctx1.to(device)).reshape(-1, 256).detach().cpu()
                 output2 = model(ctx2.to(device)).reshape(-1, 256).detach().cpu()
 
-                if (level == 6):
-                    torch.save(output2, f"ctx2_{level}_{i}.pt")
-
-                output = torch.zeros((ctx_win, 256))
-                output[0::2] = output1[0::2]
-                output[1::2] = output2[1::2]
-
-                prob[idx] = softmax(output)
+                prob1[idx] = softmax(output1)
+                prob2[idx] = softmax(output2)
 
             occupys = octree_nodes[levels == level][:, -1, 0]
-            if level == 0:
-                bits += save_byte_stream(prob[:-1], occupys, f"output/{level}_1.bin")
-            else:
-                bits += save_byte_stream(prob[:-1][0::2], occupys[0::2], f"output/{level}_1.bin")
-                bits += save_byte_stream(prob[:-1][1::2], occupys[1::2], f"output/{level}_2.bin")
 
+            if level == 0:
+                bits += save_byte_stream(prob1[:-1], occupys, f"output/{level}_1.bin")
+            else:
+                bits += save_byte_stream(prob1[:-1][0::2], occupys[0::2], f"output/{level}_1.bin")
+                bits += save_byte_stream(prob2[:-1][1::2], occupys[1::2], f"output/{level}_2.bin")
 
     return bits
 
@@ -100,7 +93,7 @@ def main(model, file_name):
 
 if __name__ == "__main__":
     # ckpt path
-    model = AncestralModel.load_from_checkpoint("./last.ckpt").to(device)
+    model = AncestralModel.load_from_checkpoint("./ckpt/last.ckpt").to(device)
 
     model.eval()
 

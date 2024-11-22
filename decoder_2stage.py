@@ -46,7 +46,7 @@ if __name__ == "__main__":
     # Dictionary to obtain voxel size by level
     voxel_size_by_level = get_voxel_size_by_level_dict(max_bound, min_bound, max_level)
 
-    model = AncestralModel.load_from_checkpoint("./last.ckpt").cuda()
+    model = AncestralModel.load_from_checkpoint("./ckpt/last.ckpt").cuda()
     model.eval()
 
     total_symbol = []
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         length = len(nodes)
         padding_ctx, padding_idx = process_context([node.get_decode_context() for node in nodes])
         padding_ctx_len = padding_ctx.shape[0]
-        padding_ctx[length:, :, -1, 0] = 0
+        padding_ctx[:, :, -1, 0] = 0
 
         prob1 = torch.zeros((length + 1, 256))
 
@@ -78,35 +78,27 @@ if __name__ == "__main__":
         for i in range(0, padding_ctx_len, ctx_win):
             idx1 = padding_idx[i : i + ctx_win].clone()
             ctx1 = padding_ctx[i : i + ctx_win].clone()
-            output1 = model(ctx1).reshape(-1, 256)
-            prob1[idx1] = softmax(model(ctx1).reshape(-1, 256)).detach().cpu()
 
-        prob1 = prob1[:-1].cuda()
-        syms1 = get_symbol_from_byte_stream(byte_stream_1, prob1[0::2])
+            output1 = model(ctx1).reshape(-1, 256).detach().cpu()
+
+            prob1[idx1] = softmax(output1)
+
+        syms1 = get_symbol_from_byte_stream(byte_stream_1, prob1[:-1][0::2])
+        assert syms1.tolist() == ref[0::2].tolist()
 
         if level != 0:
             prob2 = torch.zeros((length + 1, 256))
+
+            odd = torch.arange(0, length, 2)
+            padding_ctx[odd, :, -1, 0] = syms1.reshape(-1, 1).long().cuda()
 
             for i in range(0, padding_ctx_len, ctx_win):
                 idx2 = padding_idx[i : i + ctx_win].clone()
                 ctx2 = padding_ctx[i : i + ctx_win].clone()
 
-                odd = torch.arange(0, min(length, ctx_win), 2)
+                output2 = model(ctx2).reshape(-1, 256).detach().cpu()
 
-                ctx2[odd, :, -1, 0] = syms1.reshape(-1, 1).long().cuda()
-
-                # if i == padding_ctx_len // ctx_win - 1:
-                #     ctx2[length % ctx_win:] = ctx2[length % ctx_win - 1]
-
-                if level == 6:
-                    ref = torch.load(f"ctx2_6_0.pt")
-
-                output2 = model(ctx2).reshape(-1, 256)
-
-                if level == 6:
-                    print(output2.eq(ref.cuda()).all())
-
-                prob2[idx2] = softmax(output2.cuda()).detach().cpu()
+                prob2[idx2] = softmax(output2)
 
             syms2 = get_symbol_from_byte_stream(byte_stream_2, prob2[:-1][1::2])
 
